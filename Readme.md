@@ -1,6 +1,6 @@
 ## Reproduction Package ##
 
-This package is the reproduction kit for the program repair tool named "Rete". The package contains various components that help in running Rete and its combination with another tool named Trident. The package also includes tools and scripts to perform feature extraction and graph and dataset analysis.
+This package is the reproduction kit for the program repair tool `Rete`. The package contains various components that help in running Rete and its combination with another tool named Trident. The package also includes tools and scripts to perform feature extraction and graph and dataset analysis.
 
 
 
