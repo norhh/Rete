@@ -1,74 +1,94 @@
 ## Reproduction Package ##
 
-This is the reproduction package for Rete.
+This package is the reproduction kit for the program repair tool named "Rete". The package contains various components that help in running Rete and its combination with another tool named Trident. The package also includes tools and scripts to perform feature extraction and graph and dataset analysis.
+
 
 
 
 ## File System Contents ##
+The package includes the following directories and files:
 
-Rete-Trident - Source code for running rete + Trident.
-rete-feature-extractor - Feature extraction process of Rete and Prophet for Python.
-Scripts - Script for graph and dataset information.
-eval - A sample example from manybugs which can run both Trident, Rete + Trident and SemFix
+- Rete-Trident - Contains the source code for running Rete and Trident.
+- rete-feature-extractor - This directory holds the feature extraction process of Rete and another tool called Prophet for Python.
+- Scripts - Contains scripts for graph and dataset information.
+- eval - This directory has a sample example from the ManyBugs dataset, which can be used to run Trident, Rete+Trident, and another tool called SemFix.
 
 
 ## Instructions to Run each of the Components ##
 
-The individual Readme.md's in each directory should discuss how they are run.
+Each directory in the package has its own Readme.md file that provides instructions on how to run the components.
+
 
 
 
 ## Building the Container
 
-Building the Dockerfile
+To build the Docker container, follow the steps below:
 
+1. Run the following command in your terminal:
+
+``` 
 > docker build . -t reproduction_package
+```
 
-Going into the docker container
+2. To go inside the Docker container, run the following command:
 
+```
 >docker run -v $(pwd):/home/Trident/ --rm -ti reproduction_package /bin/bash
-
+```
 
 
 ## Tools
 
-The package helps in running the following tools
+The package provides support to run the following tools:
 
-Rete --> Tool constructed in this paper.
-Rete + Trident --> A combination of Trident's specification with rete's synthesizer and variable prioritiser.
-Trident
-Prophet --> Implemented for Python
-SemFix
+1. Rete: The tool that is constructed in the research paper.
+2. Rete + Trident: A combination of Trident's specification with Rete's synthesizer and variable prioritizer.
+3. Trident: A standalone tool.
+4. Prophet: An implementation of the tool for Python.
 
 
 # Installing Feature Extractor
 
-Build the docker container in infra, and then build the container in the current folder.
+To install the feature extractor, follow the steps below:
 
+1. Go to the infra directory:
+
+```
 > cd infra/
+```
 
+2. Build the Docker container in the infra directory:
+
+```
 > docker build -t rete/ubuntu-16.04-llvm-3.8.1 .
+```
+3. Change to the parent directory and build the Docker container:
 
+```
 > cd ..
-
 > docker build -t rete-feature .
+```
+
 
 # Random Forest Features
 
-We maintain the counts of each individual features for each variables. We only choose variables with maximal of such features and ignore the rest. The variable identification is done with respect to the order of variables' features that are fed to the RF. If RF outputs 7, it means the 7th variable is the correct one.    
+The package also includes a feature extraction process that is based on random forest. This process involves counting the individual features for each variable, choosing the variables with the maximum count, and ignoring the rest. The variable identification is done based on the order of variables' features fed to the random forest. If the random forest outputs 7, it means that the 7th variable is the correct one.
 
-       def: count of variable definitions 
-       use: count of variable uses
-       for_init: count of 'for' loop initialisation uses
-       for_cond: count of 'for' loop condition uses
-       for_lcv: count of loop control uses
-       while_cond: count of 'while' loop condition uses
-       if_cond: count of 'if' condition uses
-       hole_to_def: distance between hole and the def
-       last_use: distance to last use 
-       hole_window: count of uses in k lines around hole 
-       operator_histo: multiset of counts of operator/function uses
-       is_global: local/global variables
+Here is the list of the features used by the Random Forest:
+
+1.  ***def:*** count of variable definitions 
+2.  ***use:*** count of variable uses
+3.  ***for_init:*** count of 'for' loop initialisation uses
+4.  ***for_cond:*** count of 'for' loop condition uses
+5.  ***for_lcv:*** count of loop control uses
+6.  ***while_cond:*** count of 'while' loop condition uses
+7.  ***if_cond:*** count of 'if' condition uses
+8.  ***hole_to_def:*** distance between hole and the def
+10. ***last_use:*** distance to last use 
+11. ***hole_window:*** count of uses in k lines around hole 
+12. ***operator_histo:*** multiset of counts of operator/function uses
+13. ***is_global:*** local/global variables
 
        
 
@@ -78,13 +98,15 @@ We maintain the counts of each individual features for each variables. We only c
 
 Run the docker container by first mounting your current directory into "/tmp" to "/bin/bash"
 
+```
 > docker run -v $(pwd):/tmp --rm -it rete /bin/bash
-
+```
 
 You can ignore the mounting if you do not need the current directory. You can either compile inside docker
 
 after mounting or directly run the build code present in "/rete" folder.
 
+```
 > cd /tmp/rete
 
 > cmake .. -DF1X_LLVM=/llvm-3.8.1
@@ -92,30 +114,36 @@ after mounting or directly run the build code present in "/rete" folder.
 > make
 
 > chmod u+x rete
-
+```
 
 
 
 To extract a json of feature information.
 
+```
 > ./rete -output="<path>"
-
+```
 
 
 To extract intermediate CDU chain data.
 
+```
 > ./rete -get-chain-data -output="<path>"
+```
 
 # Python-Prophet
 
 To extract Prophet's Features ().
 
-python3 rete-feature-extracter/learning/prophet.py extract-features <file_path> --output-file <output_file_path>
+```
+> python3 rete-feature-extracter/learning/prophet.py extract-features <file_path> --output-file <output_file_path>
+```
 
 To extract Prophet's Feature vector () from Prophet's features ().
 
-python3 rete-feature-extracter/learning/prophet.py feature-vector --buggy buggy_file.pcl --correct correct_file.pcl --mod-kind <MOD_TYPE> --line-no <line_no>
-
+```
+> python3 rete-feature-extracter/learning/prophet.py feature-vector --buggy buggy_file.pcl --correct correct_file.pcl --mod-kind <MOD_TYPE> --line-no <line_no>
+```
 
 
 # Rete-Trident
