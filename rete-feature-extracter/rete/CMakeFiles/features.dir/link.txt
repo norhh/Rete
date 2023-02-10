@@ -1,0 +1,2 @@
+/usr/bin/ar qc libfeatures.a  CMakeFiles/features.dir/feature_matchers.cpp.o CMakeFiles/features.dir/feature_vector.cpp.o CMakeFiles/features.dir/rete_utils.cpp.o
+/usr/bin/ranlib libfeatures.a

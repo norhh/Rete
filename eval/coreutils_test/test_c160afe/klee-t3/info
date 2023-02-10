@@ -1,0 +1,22 @@
+klee --posix-runtime --libc=uclibc --write-smt2s --max-solver-time 100 --max-time 1200 --max-forks=50 --output-dir=/home/Trident/eval/coreutils_test/test_c160afe/klee-t3 cp.bc --attributes-only -a /home/Trident/eval/coreutils_test/test_c160afe/a /home/Trident/eval/coreutils_test/test_c160afe/d
+PID: 219
+Using monotonic steady clock with 1/1000000000s resolution
+Started: 2021-02-15 04:19:46
+BEGIN searcher description
+<InterleavedSearcher> containing 2 searchers:
+RandomPathSearcher
+WeightedRandomSearcher::CoveringNew
+</InterleavedSearcher>
+END searcher description
+Finished: 2021-02-15 04:20:03
+Elapsed: 00:00:17
+KLEE: done: explored paths = 51
+KLEE: done: avg. constructs per query = 19
+KLEE: done: total queries = 79
+KLEE: done: valid queries = 0
+KLEE: done: invalid queries = 79
+KLEE: done: query cex = 79
+
+KLEE: done: total instructions = 14465244
+KLEE: done: completed paths = 51
+KLEE: done: generated tests = 51

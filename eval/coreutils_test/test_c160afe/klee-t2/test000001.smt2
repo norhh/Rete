@@ -1,0 +1,6 @@
+(set-logic QF_AUFBV )
+(declare-fun model_version () (Array (_ BitVec 32) (_ BitVec 8) ) )
+(declare-fun output!i32!output!0 () (Array (_ BitVec 32) (_ BitVec 8) ) )
+(assert (and  (=  (_ bv1 32) (concat  (select  model_version (_ bv3 32) ) (concat  (select  model_version (_ bv2 32) ) (concat  (select  model_version (_ bv1 32) ) (select  model_version (_ bv0 32) ) ) ) ) ) (=  (_ bv0 32) (concat  (select  output!i32!output!0 (_ bv3 32) ) (concat  (select  output!i32!output!0 (_ bv2 32) ) (concat  (select  output!i32!output!0 (_ bv1 32) ) (select  output!i32!output!0 (_ bv0 32) ) ) ) ) ) ) )
+(check-sat)
+(exit)

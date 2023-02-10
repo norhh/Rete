@@ -1,0 +1,37 @@
+Description:
+gen_tempname() function and try_tempname() function:
+create a private temporary file or directory.
+
+Files:
+lib/tempname.c
+lib/tempname.h
+m4/tempname.m4
+
+Depends-on:
+extensions
+fcntl-h
+getrandom
+libc-config
+lstat
+mkdir
+stdint
+sys_stat
+
+configure.ac:
+gl_FUNC_GEN_TEMPNAME
+gl_MODULE_INDICATOR([tempname])
+
+Makefile.am:
+lib_SOURCES += tempname.c
+
+Include:
+"tempname.h"
+
+Link:
+$(LIB_GETRANDOM)
+
+License:
+LGPLv2+
+
+Maintainer:
+Eric Blake and Jim Meyering

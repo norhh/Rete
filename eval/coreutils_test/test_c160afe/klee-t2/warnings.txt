@@ -1,0 +1,28 @@
+KLEE: WARNING: undefined reference to function: __ctype_get_mb_cur_max
+KLEE: WARNING: undefined reference to function: bindtextdomain
+KLEE: WARNING: undefined reference to function: fallocate
+KLEE: WARNING: undefined reference to function: fdopendir
+KLEE: WARNING: undefined reference to function: futimens
+KLEE: WARNING: undefined reference to function: gettext
+KLEE: WARNING: undefined reference to function: linkat
+KLEE: WARNING: undefined reference to function: posix_fadvise
+KLEE: WARNING: undefined reference to function: readlinkat
+KLEE: WARNING: undefined reference to function: renameat
+KLEE: WARNING: undefined reference to function: rpmatch
+KLEE: WARNING: undefined reference to function: symlinkat
+KLEE: WARNING: undefined reference to function: textdomain
+KLEE: WARNING: undefined reference to function: utimensat
+KLEE: WARNING: executable has module level assembly (ignoring)
+KLEE: WARNING ONCE: calling external: syscall(16, 0, 21505, 79461744) at /klee/runtime/POSIX/fd.c:980 10
+KLEE: WARNING ONCE: calling __user_main with extra arguments.
+KLEE: WARNING ONCE: Alignment of memory from call "malloc" is not modelled. Using alignment of 8.
+KLEE: WARNING ONCE: calling external: bindtextdomain(67629904, 78967424) at src/cp.c:956 5
+KLEE: WARNING ONCE: calling external: textdomain(67629904) at src/cp.c:958 5
+KLEE: WARNING ONCE: Alignment of memory from call "realloc" is not modelled. Using alignment of 8.
+KLEE: WARNING ONCE: calling external: geteuid() at src/copy.c:3252 59
+KLEE: WARNING ONCE: Alignment of memory from call "calloc" is not modelled. Using alignment of 8.
+KLEE: WARNING: mkdir: ignoring (EIO)
+KLEE: WARNING ONCE: calling external: gettext(78971776) at src/copy.c:2764 22
+KLEE: WARNING ONCE: calling external: __ctype_get_mb_cur_max() at lib/quotearg.c:262 36
+KLEE: WARNING ONCE: calling external: vprintf(78371680, 65157696) at libc/stdio/fprintf.c:35 14
+KLEE: WARNING ONCE: calling close_stdin with extra arguments.
