@@ -1,0 +1,4 @@
+__pycache__/
+*.py[cod]
+/rete-feature-extracter/build/
+/dataset/chain_data/

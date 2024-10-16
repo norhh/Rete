@@ -18,7 +18,7 @@ cd coreutils_c160afe || return
 #autoreconf -f -i
 ./configure CFLAGS="-g -O0" CC=wllvm
 make clean
-if [ $1 == "trident" ]
+if [ "${1:-}" == "trident" ]
 then
   patch  src/cp.c "${save}"/trident.transform
 else
@@ -60,4 +60,4 @@ klee --posix-runtime --libc=uclibc --write-smt2s --output-dir=klee-t2 "${PROGRAM
 
 timeout -k 1200s 1200s python3.6 /home/Trident/Trident/main/synthesis.py \
           --tests t1.smt2:klee-t1 t2.smt2:klee-t2 t3.smt2:klee-t3 --priority \
-          --components /home/Trident/Trident/components/*.smt2 --theta 3.243 --batch 14
+          --components /home/Trident/Trident/components/*.smt2 --theta 3.243

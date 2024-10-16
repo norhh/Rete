@@ -33,7 +33,7 @@ RUN pip3 install clang
 ENV Clang_DIR="/llvm-3.8.1/share/clang/cmake/"             
 ENV LLVM_DIR="/llvm-3.8.1/share/llvm/cmake/"
 
-ENV PATH="/f1x/build/tools:${PATH}"
+ENV PATH="/rete/build/tools:${PATH}"
 
 CMD ["/bin/bash"]
 

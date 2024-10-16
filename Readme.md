@@ -1,289 +1,95 @@
-## Reproduction Package ##
+# Rete reproduction package
 
-This package is the reproduction kit for the program repair tool `Rete`. The package contains various components that help in running Rete and its combination with another tool named Trident. The package also includes tools and scripts to perform feature extraction and graph and dataset analysis.
+This repository accompanies [*Rete: Learning Namespace Representation for Program Repair*](https://mechtaev.com/files/icse23.pdf), ICSE 2023, by Nikhil Parasaram, Earl T. Barr, and Sergey Mechtaev. The paper evaluates variable ranking with CDU chains in three repair configurations: plastic surgery, Prophet, and Trident. Its evaluation uses 107 BugsInPy bugs, 35 ManyBugs bugs, and 28 Python programs for representation experiments.
 
+## What this checkout can reproduce
 
+| Component | Contents in this checkout | Current limit |
+| --- | --- | --- |
+| C/C++ feature extraction | Clang-based extractor and a batch driver | Requires LLVM/Clang 3.8.1 to build |
+| Python Prophet | Feature extraction and feature-vector code | Training data and environment are not packaged |
+| Trident and Rete search | Runtime, synthesis code, components, nine small examples, and repaired template/variable ordering | Original CodeBERT weights and probability outputs are absent |
+| ManyBugs evaluation | One Coreutils example | The other cases and complete results are absent |
+| BG107 timing figure | `Scripts/time_data.json` with 107 timings per tool | Raw patch and test outputs are absent |
+| CoCoNut baseline | Adapted scripts | Its `fairseq-context` forks and models are absent |
 
+Run `python3 Scripts/check_package.py` for an inventory. `--json` gives a machine-readable report; `--strict` exits nonzero until the paper's artifacts are complete. This is an audit, not a claim that the historical toolchains have been rebuilt.
 
-## File System Contents ##
-The package includes the following directories and files:
+The dataset ID notes also have unresolved gaps. `Dataset-Information/bg107_info.txt` lists 107 entries but only 106 distinct project/bug pairs because Luigi bug 10 occurs twice. `Dataset-Information/mb37_info.txt` lists 34 pairs, while the paper reports an MB35 evaluation subset. The missing IDs cannot be inferred from the archived files, so neither list should be used as an exact benchmark manifest yet.
 
-- Rete-Trident - Contains the source code for running Rete and Trident.
-- rete-feature-extractor - This directory holds the feature extraction process of Rete and another tool called Prophet for Python.
-- Scripts - Contains scripts for graph and dataset information.
-- eval - This directory has a sample example from the ManyBugs dataset, which can be used to run Trident, Rete+Trident, and another tool called SemFix.
+## Layout
 
+- `rete-feature-extracter/`: Clang extractor, Python learning code, and Prophet feature code. The directory name intentionally retains the original spelling.
+- `Rete-Trident/`: Trident runtime, synthesizer, components, and small examples.
+- `eval/coreutils_test/`: one archived ManyBugs-style case with KLEE outputs.
+- `Dataset-Information/`: historical corpus notes, with the discrepancies above.
+- `Scripts/`: timing data, plot generator, and package audit.
+- `coconut/`: adapted CoCoNut scripts, without the required fairseq forks.
 
-## Instructions to Run each of the Components ##
+## Feature extraction
 
-Each directory in the package has its own Readme.md file that provides instructions on how to run the components.
+The extractor's CMake option is `RETE_LLVM`. With LLVM/Clang 3.8.1 installed at `/llvm-3.8.1`:
 
-
-
-
-## Building the Container
-
-To build the Docker container, follow the steps below:
-
-1. Run the following command in your terminal:
-
-``` 
-> docker build . -t reproduction_package
+```sh
+cmake -S rete-feature-extracter -B rete-feature-extracter/build -DRETE_LLVM=/llvm-3.8.1
+cmake --build rete-feature-extracter/build
 ```
 
-2. To go inside the Docker container, run the following command:
+For a project with `compile_commands.json`, use its compilation database so the extractor receives the project's include paths and defines:
 
-```
->docker run -v $(pwd):/home/Trident/ --rm -ti reproduction_package /bin/bash
-```
-
-
-## Tools
-
-The package provides support to run the following tools:
-
-1. Rete: The tool that is constructed in the research paper.
-2. Rete + Trident: A combination of Trident's specification with Rete's synthesizer and variable prioritizer.
-3. Trident: A standalone tool.
-4. Prophet: An implementation of the tool for Python.
-
-
-# Installing Feature Extractor
-
-To install the feature extractor, follow the steps below:
-
-1. Go to the infra directory:
-
-```
-> cd infra/
+```sh
+python3 rete-feature-extracter/rete_runner.py \
+  --compile-commands /path/to/project/compile_commands.json \
+  --executable rete-feature-extracter/build/tools/rete \
+  --output-dir /path/to/output/chain_data
 ```
 
-2. Build the Docker container in the infra directory:
+For simple sources, pass a source directory instead of `--compile-commands`. The driver scans C/C++ files recursively, preserves relative paths in the output, resumes valid outputs, and exits nonzero if any file fails. `--features` requests feature JSON instead of CDU-chain JSON; `--force` replaces existing outputs. The Wireshark wrapper retains the historical `capsa` filter and accepts the same overrides.
 
-```
-> docker build -t rete/ubuntu-16.04-llvm-3.8.1 .
-```
-3. Change to the parent directory and build the Docker container:
+The historical container build is:
 
-```
-> cd ..
-> docker build -t rete-feature .
+```sh
+docker build -t rete/ubuntu-16.04-llvm-3.8.1 rete-feature-extracter/infra
+docker build -t rete-feature rete-feature-extracter
 ```
 
+It depends on Ubuntu 16.04 and LLVM 3.8.1 and has not been verified in a current Docker environment. The included build scripts are research-era sources rather than pinned modern images.
 
-# Random Forest Features
+## Trident and Rete ranking
 
-The package also includes a feature extraction process that is based on random forest. This process involves counting the individual features for each variable, choosing the variables with the maximum count, and ignoring the rest. The variable identification is done based on the order of variables' features fed to the random forest. If the random forest outputs 7, it means that the 7th variable is the correct one.
+The root `Dockerfile` is the historical KLEE/Trident environment. Its source path and a malformed continuation have been corrected. If it builds in your environment, start with the small example:
 
-Here is the list of the features used by the Random Forest:
-
-1.  ***def:*** count of variable definitions 
-2.  ***use:*** count of variable uses
-3.  ***for_init:*** count of 'for' loop initialisation uses
-4.  ***for_cond:*** count of 'for' loop condition uses
-5.  ***for_lcv:*** count of loop control uses
-6.  ***while_cond:*** count of 'while' loop condition uses
-7.  ***if_cond:*** count of 'if' condition uses
-8.  ***hole_to_def:*** distance between hole and the def
-10. ***last_use:*** distance to last use 
-11. ***hole_window:*** count of uses in k lines around hole 
-12. ***operator_histo:*** multiset of counts of operator/function uses
-13. ***is_global:*** local/global variables
-
-       
-
-
-
-# Running
-
-Run the docker container by first mounting your current directory into "/tmp" to "/bin/bash"
-
-```
-> docker run -v $(pwd):/tmp --rm -it rete /bin/bash
+```sh
+docker build -t rete-trident .
+docker run --rm -it rete-trident bash
+cd /home/Trident/Rete-Trident
+./tests/assignment/run
 ```
 
-You can ignore the mounting if you do not need the current directory. You can either compile inside docker
+The Docker build was not verified here because Docker is unavailable. The container uses old Ubuntu, LLVM, KLEE, and Python versions, so its dependency repositories may need archival work. `Rete-Trident/README.md` documents the synthesizer's SMT interface.
 
-after mounting or directly run the build code present in "/rete" folder.
+The Rete enumerator now starts from at most 20 single-holed donor statements, explores template edits by distance, and lazily ranks concrete patches with the paper's score `distance + theta * mean(1/probability)`. It uses the paper's default `theta = 0.073` and at most 30 variables per hole. `--template-budget` can optionally limit the total search for experiments. The verified synthesis path and JSON patch serialization have also been repaired.
 
-```
-> cd /tmp/rete
+`--templates` requires `--model` pointing to a JSON export of variable probabilities. The adapter in `Rete-Trident/main/rankers.py` accepts a `default` mapping and optional `contexts` keyed by template code or `template_code@hole/path`. See `Rete-Trident/tests/probabilities.example.json` for **synthetic test values only**. A default mapping allows search to score newly generated templates; it is not a substitute for the paper's fine-tuned CodeBERT ranker. The original trained weights and per-context probabilities are missing, so the paper's ranking quality and repair counts cannot yet be reproduced. `--all` prints every generated patch, and `--theta` accepts fractional values.
 
-> cmake .. -DF1X_LLVM=/llvm-3.8.1
+The core algorithm checks can be run in an isolated environment:
 
-> make
-
-> chmod u+x rete
-```
-
-
-
-To extract a json of feature information.
-
-```
-> ./rete -output="<path>"
+```sh
+python3 -m venv /tmp/rete-test-env
+/tmp/rete-test-env/bin/pip install -r Rete-Trident/requirements-test.txt
+/tmp/rete-test-env/bin/python -m unittest discover -s Rete-Trident/tests -p 'test_rete_algorithm.py'
 ```
 
+## Python timing figure
 
-To extract intermediate CDU chain data.
+The stored BG107 timing series can be processed without a plotting library:
 
-```
-> ./rete -get-chain-data -output="<path>"
-```
-
-# Python-Prophet
-
-To extract Prophet's Features ().
-
-```
-> python3 rete-feature-extracter/learning/prophet.py extract-features <file_path> --output-file <output_file_path>
+```sh
+python3 Scripts/plot.py --output bg107-curves.json
 ```
 
-To extract Prophet's Feature vector () from Prophet's features ().
+To render a figure, install `matplotlib` in your own environment and use `--output bg107-curves.png` or `.pdf`. The script reads its data relative to itself, checks the 107-row shape, and reproduces the archived 10-permutation mean curves. It does not regenerate timings from repair runs.
 
-```
-> python3 rete-feature-extracter/learning/prophet.py feature-vector --buggy buggy_file.pcl --correct correct_file.pcl --mod-kind <MOD_TYPE> --line-no <line_no>
-```
+## Remaining recovery work
 
-
-# Rete-Trident
-
-Build and run a container:
-
->docker build -t rtrident .
->docker run --rm -ti rtrident /bin/bash
-
-Build runtime:
-
-cd runtime
-KLEE_INCLUDE_PATH=/klee/include make
-
-Run examples:
-
-
->./tests/assignment/run
->./tests/iterations/run
->./tests/multipath/run
->./tests/simple-rvalue/run
-
-
-
-# Synthesizer interface
-
-The synthesizer supports the following functionality:
-
-Verifying a given patch
-Generating a patch
-Generating all patches
-As specification, the synthesizer uses KLEE path conditions generated by Trident runtime, conjoined with test assertions.
-
-To verify a given patch, run the following command:
-
-```
-> python3.6 /path/to/synthesis.py --tests \ <ASSERTION_SMT_FILE>:<KLEE_OUTPUT_DIR> ... \
---components <COMPONENT_SMT_FILE> ... \
---verify <LOCATION ID>:<PATCH_FILE> ...
---templates <Template_Path> \
---depth <int> \
---model <model> \
---theta <int> 
-```
-
-If the template path is specified then the synthesizer uses Rete's Plastic surgery based synthesis using the templates extracted from the codebase. If the path is not mentioned synthesizer defaults to naive enumeration.
-
-The names of some files are important: the names of component files are components IDs, the names of assertion files are test IDs.
-
-Patch file can be either an SMT file with patch semantics (same as components without holes), or JSON file that describes a tree of components and a valuation of constants. Here is an example of such JSON file:
-
-```
-{
-
-"tree": {
-
-"node": "less-or-equal",
-
-"children": {
-
-"left": {
-
-"node": "x"
-
-},
-
-"right": {
-
-"node": "constant_a"
-
-}
-
-}
-
-},
-
-"constants": {
-
-"a": 2
-
-}
-
-}
-```
-
-
-The above JSON describes the expression "x <= 2". Specifically, it encodes the tree of components "less-or-equal[left=x, right=constant_a]", and specifies that the constant "a" equals 2. Note that "a" does not refer to "constant_a" ("constant_a" is just a component ID), but to the variable "const_a" used in the definition of constant_a component.
-
-To generate a patch, run the following command:
-
-```
-> python3.6 /path/to/synthesis.py --tests <ASSERTION_SMT_FILE>:<KLEE_OUTPUT_DIR> ... \
---components <COMPONENT_SMT_FILE> ...
-```
-
-Add `--all` to generate all patches, and `--depth <DEPTH>` to generate expressions with the length from the root component to the leaves being at most DEPTH.
-
-
-
-Components are defined as SMT formulas with special variables and rules how these variables can be used. Standard components are defined in the "components" directory. Note that these components do not include variables, since variables are project-specific.
-
-
-
-Component definitions use special variables that can be classified as inputs and outputs. Component inputs include:
-
-Constant symbol (`const_<NAME>`) - the value of a constant parameter (to be found by SMT solver)
-Rvalue variable reference (`rvalue_<NAME>`) - the value of a program variable (passed to trident runtime)
-Rvalue hole (`rhole_<NAME>`) - the value of a subtree of the current component
-Component outputs include:
-
-Rvalue return (`rreturn`) - the value of the tree rooted at the current component
-Lvalue return (`lreturn`) - the value of the tree rooted at the current component after it is assigned
-Lvalue variable reference (`lvalue_<NAME>`) - the value of a program variable (passed to trident runtime) after it is assigned
-Lvalue hole (`lhole_<NAME>`) - the value of a subtree of the current component after it is assigned
-The rules for using these variables are the following:
-
-Each component should have an rreturn or an lreturn or both
-The value of each output should be always determined by the values of inputs.
-Constants and variable references are global, i.e. if the same constant or variable name is used in two components, these will be the same constants/variables. However, the names of holes are local to each component.
-The following is the correct definition of guarded assignment component:
-
-(declare-const lhole_left (_ BitVec 32))
-(declare-const rhole_left (_ BitVec 32))
-(declare-const rhole_right (_ BitVec 32))
-(declare-const rhole_condition Bool)
-(declare-const rreturn (_ BitVec 32))
-(assert (and (= rreturn rhole_right)
-(ite rhole_condition (= lhole_left rhole_right) (= lhole_left rhole_left))))
-
-The above specifies that
-
-`(= rreturn rhole_right)` - the statement as a whole outputs the value of the subtree "right"
-`(= lhole_left rhole_right)` - if the condition is true, the value of the subtree "left" will be updated to the value of the subtree "right"
-`(= lhole_left rhole_left)` - if the condition is false, the value of the subtree "left" will remain as it was originally
-The following definition is incorrect, since it only updates `x` when it is positive, but does not specify it when it is negative:
-
-(declare-const rvalue_x (_ BitVec 32))
-(declare-const lvalue_x (_ BitVec 32))
-(declare-const rreturn (_ BitVec 32))
-(assert (and (= rreturn 0) (=> (> rvalue_x 0) (= lvalue_x 1))))
-
-
-
+A faithful rerun of the paper still needs the original or retrained CodeBERT variable ranker and weights, its training helper, a corrected corpus manifest, the 28 training program snapshots, all 107 BugsInPy and 35 ManyBugs cases with test splits, and the baseline environments and raw patches. The paper describes a 20/80 test split with at least one failing test in the smaller part, but this checkout does not contain the per-bug split assignments. Reconstructing those choices from the published counts alone would change the experiment.

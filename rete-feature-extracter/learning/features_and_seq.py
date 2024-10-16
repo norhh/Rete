@@ -11,7 +11,6 @@ import json
 import pickle
 from transformers import RobertaConfig, RobertaTokenizer, RobertaForMaskedLM, pipeline
 from transformers import TrainingArguments, Trainer
-from model_trainers import bert_trainer
 
 import argparse
 from time import time
@@ -462,9 +461,12 @@ my_parser.add_argument('--all', action='store_true',  default=False)
 my_parser.add_argument('--relearn', action='store_true', default=False)
 my_parser.add_argument('--relearn-xgb', action='store_true', default=False)
 my_parser.add_argument('--bert', action='store_true', default=False)
+my_parser.add_argument('--plot', action='store_true', default=False)
 
 # Execute the parse_args() method
 args = my_parser.parse_args()
+if args.bert:
+    my_parser.error("CodeBERT training requires the missing model_trainers.py helper")
 
 i = 0
 parser = Parser()

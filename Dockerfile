@@ -76,7 +76,7 @@ WORKDIR /klee-uclibc
 
 RUN git clone https://github.com/klee/klee-uclibc.git . && \
     git checkout ${KLEE_UCLIBC_VERSION} && \
-    CC=clang ./configure --make-llvm-lib && \ 
+    CC=clang ./configure --make-llvm-lib && \
     make -j2
 
 ENV KLEE_VERSION=2.0
@@ -123,7 +123,8 @@ RUN python3.6 -m pip --disable-pip-version-check --no-cache-dir install funcy &&
     python3 -m pip --disable-pip-version-check --no-cache-dir install matplotlib==3.0.0
 
 COPY . /home/Trident
-WORKDIR /home/Trident/Trident/runtime
+RUN ln -s /home/Trident/Rete-Trident /home/Trident/Trident
+WORKDIR /home/Trident/Rete-Trident/runtime
 RUN KLEE_INCLUDE_PATH=/klee/include make
 ENV FORCE_UNSAFE_CONFIGURE=1
 

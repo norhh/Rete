@@ -49,6 +49,10 @@ static cl::opt<bool>
 
 int main(int argc, const char **argv) {
 CommonOptionsParser OptionsParser(argc, argv, ReteCategory);
+if (OutputFile.getValue().empty()) {
+    std::cerr << "rete: -output is required\n";
+    return 2;
+}
 ClangTool Tool(OptionsParser.getCompilations(),
                 OptionsParser.getSourcePathList());
 
@@ -67,7 +71,10 @@ Finder.addMatcher(IfMatcher, &IfMatcherVar);
 Finder.addMatcher(RValueMatcher, &rval);
 Finder.addMatcher(UnaryLValMatcher, &ulval);
 
-Tool.run(newFrontendActionFactory(&Finder).get());
+int tool_result = Tool.run(newFrontendActionFactory(&Finder).get());
+if (tool_result != 0) {
+    return tool_result;
+}
 
 json::Document document;
 const char* json = "{}";
@@ -144,6 +151,14 @@ document.Accept(writer);    // Accept() traverses the DOM and generates Handler 
 
 ofstream outdata;
 outdata.open(OutputFile);
+if (!outdata) {
+    std::cerr << "rete: cannot open output file: " << OutputFile.getValue() << "\n";
+    return 1;
+}
 outdata<<sb.GetString();
 outdata.close();
+if (!outdata) {
+    std::cerr << "rete: failed to write output file: " << OutputFile.getValue() << "\n";
+    return 1;
+}
 }

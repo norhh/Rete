@@ -24,7 +24,6 @@ from keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
 from datasets import load_metric
 from transformers import RobertaConfig, RobertaTokenizer, RobertaForMaskedLM, pipeline
 from transformers import TrainingArguments, Trainer
-from model_trainers import bert_trainer
 from copy import deepcopy
 from sklearn import tree
 import numpy as np
@@ -455,12 +454,15 @@ my_parser.add_argument('--nn', action='store_true', default=False)
 my_parser.add_argument('--samples', action='store', type=int, default=60000)
 my_parser.add_argument('--all', action='store_true',  default=False)
 my_parser.add_argument('--relearn', action='store_true', default=False)
+my_parser.add_argument('--bert', action='store_true', default=False)
 my_parser.add_argument('--output-path', metavar='path',
                        type=str,
                        help='the path to files')
 
 # Execute the parse_args() method
 args = my_parser.parse_args()
+if args.bert:
+    my_parser.error("CodeBERT training requires the missing model_trainers.py helper")
 
 i = 0
 parser = Parser()

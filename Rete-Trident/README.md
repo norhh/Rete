@@ -1,5 +1,12 @@
 # Trident :trident: :rocket:
 
+This directory contains the Trident synthesizer and small examples. The Rete
+template search and joint patch score have been repaired. `--templates` requires
+`--model` with probabilities exported from a trained variable ranker. The original
+CodeBERT weights are missing; `tests/probabilities.example.json` contains synthetic
+values for exercising the algorithm only. The root [package audit](../Readme.md)
+records the other missing reproduction artifacts.
+
 Build and run a container:
 
     docker build -t rtrident .
@@ -31,13 +38,24 @@ To verify a given patch, run the following command:
 
     python3.6 /path/to/synthesis.py --tests <ASSERTION_SMT_FILE>:<KLEE_OUTPUT_DIR> ... \
                                     --components <COMPONENT_SMT_FILE> ... \
-                                    --verify <LOCATION ID>:<PATCH_FILE> ...
-                                    --templates <Template_Path>
-                                    --depth <int>
-                                    --model <model>
-                                    --theta <int>
+                                    --verify <LOCATION_ID>:<PATCH_FILE> ...
 
-If the template path is specified then the synthesizer uses Rete's Plastic surgery based synthesis using the templates extracted from the codebase. If the path is not mentioned synthesizer defaults to naive enumeration.
+To generate patches with Rete's template search, run:
+
+    python3.6 /path/to/synthesis.py --tests <ASSERTION_SMT_FILE>:<KLEE_OUTPUT_DIR> ... \
+                                    --components <COMPONENT_SMT_FILE> ... \
+                                    --templates <TEMPLATE_JSON_FILE> ... \
+                                    --model <PROBABILITY_EXPORT.json> \
+                                    --depth <int> --theta <float>
+
+If the template path is specified then the synthesizer uses Rete's plastic surgery
+based search and requires a probability export. If the path is not mentioned it
+defaults to naive enumeration. The JSON export accepts a `default` object mapping
+variable names to probabilities and optional `contexts` keyed by rendered template
+code or `template_code@hole/path`. The paper uses at most 20 starting templates
+and 30 candidate variables per hole; `--template-budget` adds an optional total
+search cap. These values should come from the trained
+CodeBERT ranker for a paper reproduction.
 The names of some files are important: the names of component files are components IDs, the names of assertion files are test IDs.
 
 Patch file can be either an SMT file with patch semantics (same as components without holes), or JSON file that describes a tree of components and a valuation of constants. Here is an example of such JSON file:

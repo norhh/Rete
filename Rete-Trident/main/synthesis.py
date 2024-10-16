@@ -25,16 +25,9 @@ from functools import lru_cache
 from copy import deepcopy, copy
 import io
 import heapq
-import math
+from rete_priority import ranked_bindings
 logger = logging.getLogger(__name__)
-no_ranker = False
-
-try:
-    from rankers import ChainRanker
-    ChainRanker().has_models()
-except Exception:
-    no_ranker = True
-    logger.info("No ranker info found, using default enumeration.")
+from rankers import ChainRanker
 
 Formula = Union[pysmt.fnode.FNode]
 
@@ -413,7 +406,7 @@ def program_to_json(program: Program):
         for k, v in children.items():
             symbols = collect_symbols(semantics, lambda s: ComponentSymbol.parse(s).name == k)
             if any(any_fn(ComponentSymbol.is_rhole, ComponentSymbol.is_lhole)(s) for s in symbols):
-                if "children" not in tree:
+                if "children" not in json_tree:
                     json_tree["children"] = {}
                 json_tree["children"][k] = tree_to_json(v)
         return json_tree
@@ -475,10 +468,10 @@ class RuntimeSymbol(Enum):
     @staticmethod
     def _regex(s):
         return {
-            RuntimeSymbol.ANGELIC:  re.compile(r'^choice!angelic!(\w+)!(\d+)!(\d+)$'),
-            RuntimeSymbol.RVALUE:   re.compile(r'^choice!rvalue!(\d+)!(\d+)!([\w_\d\[\].]+)$'),
-            RuntimeSymbol.LVALUE:   re.compile(r'^choice!lvalue!(\d+)!(\d+)!([\w_\d\[\].]+)$'),
-            RuntimeSymbol.SELECTOR: re.compile(r'^choice!lvalue!selector!(\d+)!([\w_\d\[\].]+)$'),
+            RuntimeSymbol.ANGELIC:  re.compile(r'^choice!angelic!(\w+)!([\w]+)!(\d+)$'),
+            RuntimeSymbol.RVALUE:   re.compile(r'^choice!rvalue!([\w]+)!(\d+)!([\w_\d\[\].]+)$'),
+            RuntimeSymbol.LVALUE:   re.compile(r'^choice!lvalue!([\w]+)!(\d+)!([\w_\d\[\].]+)$'),
+            RuntimeSymbol.SELECTOR: re.compile(r'^choice!lvalue!selector!([\w]+)!([\w_\d\[\].]+)$'),
             RuntimeSymbol.OUTPUT:   re.compile(r'^output!(\w+)!(\w+)!(\d+)$')
         }[s]
 
@@ -706,7 +699,6 @@ def verify(programs: Union[Dict[str, Program], Dict[str, Formula]],
         # dump(vc, "vc.smt2")
         a+=1
 
-    dump(vc, "vc.smt2")
     model = get_model(vc)
     if model is None:
         return None
@@ -726,193 +718,277 @@ def len_exceed(mapping):
 
 
 class ReteEnumerator:
+    """Lazy template graph search with RETE's joint patch priority.
+
+    A ranker supplies probabilities for the variables available at each hole.
+    The graph starts at single-holed versions of the supplied donor statements.
+    Its edges mask a variable, swap a hole and a variable, append an operator,
+    or remove an operator. Edges are weighted by the change in hole count.
+    """
+
     HOLE = "hole"
-    def __init__(self, templates: ComponentTree, components, args):
-        self.templates = [template[0] for template in templates]
-        self.variables = [c for c in components
-            if (ComponentSemantics.get_rreturn(c[1]) and c[0] not in COMPONENTS)]
-        self.operators = [c for c in components
-            if (ComponentSemantics.get_rreturn(c[1]) and c[0] in COMPONENTS)]
-        self.constant = [c for c in components
-            if (ComponentSemantics.get_rreturn(c[1]) and c[0] == "constant_a")]
-        self.ranker = ChainRanker(args.model)
-        self.batch = 1
-        self.theta = args.theta or 0.263
-        self.drop = 100000
-        
+    EMPTY_HOLE = ((HOLE, None), {})
 
-    def template_to_code(self, template: ComponentTree) -> str:
-        return program_to_code((template, {}))
+    def __init__(self, templates, components, args, ranker=None):
+        self.templates = [program[0] for program in templates]
+        self.components = tuple(components)
+        self.ranker = ranker if ranker is not None else ChainRanker(args.model)
+        self.theta = 0.073 if args.theta is None else args.theta
+        if self.theta <= 0:
+            raise ValueError("theta must be positive")
+        self.top_k = 30
+        self.initial_limit = 20
+        self.template_budget = getattr(args, 'template_budget', None)
+        self._slot_cache = {}
+        self._output_cache = {}
+        self._valid_cache = {}
+        self._probability_cache = {}
+        self.variables = [c for c in self.components
+                          if (c[0] not in COMPONENTS and not c[0].startswith('constant_')
+                              and not self._slots(c))]
+        self.constants = [c for c in self.components
+                          if c[0].startswith('constant_') and not self._slots(c)]
+        self.operators = [c for c in self.components
+                          if c[0] in COMPONENTS and self._slots(c)]
 
-    def has_hole(self, template):
-        if self.check_in(template, self.variables + self.constant):
+    def _slots(self, component):
+        cid, formula = component
+        if cid not in self._slot_cache:
+            names = {}
+            for symbol in collect_symbols(formula, any_fn(ComponentSymbol.is_lhole,
+                                                          ComponentSymbol.is_rhole)):
+                data = ComponentSymbol.parse(symbol)
+                old = names.get(data.name, (data.type, False, False))
+                names[data.name] = (data.type,
+                                    old[1] or ComponentSymbol.is_lhole(symbol),
+                                    old[2] or ComponentSymbol.is_rhole(symbol))
+            self._slot_cache[cid] = names
+        return self._slot_cache[cid]
+
+    def _matches(self, component, requirement):
+        if component[0] == ReteEnumerator.HOLE:
+            return True
+        typ, need_lreturn, need_rreturn = requirement
+        cid, formula = component
+        if cid not in self._output_cache:
+            lreturn = ComponentSemantics.get_lreturn(formula)
+            rreturn = ComponentSemantics.get_rreturn(formula)
+            self._output_cache[cid] = (
+                ComponentSymbol.parse(lreturn).type if lreturn else None,
+                ComponentSymbol.parse(rreturn).type if rreturn else None)
+        ltype, rtype = self._output_cache[cid]
+        if need_lreturn and ltype != typ:
             return False
-        if type(template[1]) == dict and len(template[1]) == 2 and 'left' in template[1]:
-            lvar = template[1]['left'][0][0]
-            rvar = template[1]['right'][0][0]
-            if ReteEnumerator.HOLE in (lvar, rvar):
-                return True
-            if self.has_hole(template[1]['right'][0]):
-                return True
-        elif template[0][0] == 'guarded-assignment':
-            lvar = template[1]['left'][0][0]
-            rvar = template[1]['right'][0][0]
-            condition = template[1]['condition'][0][0]
-            if ReteEnumerator.HOLE in (lvar, rvar, condition):
-                return True
-            if self.has_hole(template[1]['right'][0]) or self.has_hole(template[1]["condition"][0]):
-                return True
+        if need_rreturn and rtype != typ:
+            return False
+        return True
 
-        elif template[0][0] in ('post-increment', 'post-decrement', 'pre-increment', 'pre-decrement'):
-            lvar = template[1]['argument'][0][0]
-            if lvar == ReteEnumerator.HOLE:
-                return True
-        elif "func" in template[0][0]:
-            for data in template[1]:
-                if template[1][data][0][0] == ReteEnumerator.HOLE:
-                    return True
-                if self.has_hole(template[1][data][0]):
-                    return True
-        return False
-    def check_in(self, template, var_list):
-        for var in var_list:
-            if var[0] == template[0][0]:
-                return True
-        return False
-    def find_and_fill_hole(self, template):
-        if template[0][0] == ReteEnumerator.HOLE:
-            for i in self.variables + self.constant :
-                yield (i, {})
+    @staticmethod
+    def _paths(tree, path=()):
+        yield path, tree
+        for name, child in sorted(tree[1].items()):
+            yield from ReteEnumerator._paths(child, path + (name,))
 
-        if type(template[1]) == dict and len(template[1]) == 2 and 'left' in template[1]:
-            for l_val in self.iterate_patches(template[1]["left"]):
-                yield (template[0], {"right": template[1]["right"], "left": l_val})
-            for r_val in self.iterate_patches(template[1]["right"]):
-                yield (template[0], {"left": template[1]["left"], "right": r_val})
+    @staticmethod
+    def _replace(tree, path, replacement):
+        if not path:
+            return replacement
+        children = dict(tree[1])
+        children[path[0]] = ReteEnumerator._replace(children[path[0]], path[1:], replacement)
+        return tree[0], children
 
-        elif template[0][0] == 'guarded-assignment':
-            for l_val in self.iterate_patches(template[1]["left"]):
-                yield (template[0], {"right": template[1]["right"], "left": l_val, "condition": template[1]["condition"]})
-            for r_val in self.iterate_patches(template[1]["right"]):
-                yield (template[0], {"left": template[1]["left"], "right":r_val, "condition": template[1]["condition"]})
-            for c_val in self.iterate_patches(template[1]["condition"]):
-                yield (template[0], {"left": template[1]["left"], "condition": c_val, "right": template[1]["right"]})
+    @staticmethod
+    def _signature(tree):
+        return tree[0][0], tuple((name, ReteEnumerator._signature(child))
+                                 for name, child in sorted(tree[1].items()))
 
-        elif template[0][0] in ('post-increment', 'post-decrement', 'pre-increment', 'pre-decrement'):
-            lvar = template[1]['argument'][0][0]
-            for avar in self.iterate_patches(template[1]["argument"]):
-                yield (template[0], {"argument": avar})
-            
-        elif "func" in template[0][0]:
-            for arg in template[1]['argument']:
-                for i, data in enumerate(self.iterate_patches(arg)):
-                    yield (template[0], {f"argument_{i}": data})            
+    @staticmethod
+    def _depth(tree):
+        return 1 + max((ReteEnumerator._depth(child) for child in tree[1].values()),
+                       default=0)
 
-    def syntheize_templates(self, template):
-        if self.check_in(template, self.variables + self.constant):
-            yield ((ReteEnumerator.HOLE, template[0][1]), template[1])
+    @staticmethod
+    def _hole_count(tree):
+        return sum(node[0][0] == ReteEnumerator.HOLE
+                   for _, node in ReteEnumerator._paths(tree))
 
-        if type(template[1]) == dict and len(template[1]) == 2 and 'left' in template[1]:
-            yield (template[0], {"right": template[1]["right"], "left": ((ReteEnumerator.HOLE, template[1]["left"][0][1]), {})})
-            for r_val in self.syntheize_templates(template[1]["right"]):
-                yield (template[0], {"left": template[1]["left"], "right": r_val})
+    def _valid(self, tree, requirement, max_depth):
+        key = self._signature(tree), requirement, max_depth
+        if key in self._valid_cache:
+            return self._valid_cache[key]
+        if self._depth(tree) > max_depth:
+            self._valid_cache[key] = False
+            return False
 
-        elif template[0][0] == 'guarded-assignment':
-            yield (template[0], {"right": template[1]["right"], "left": ((ReteEnumerator.HOLE, template[1]["left"][0][1]), {}), "condition": template[1]["condition"]})
-            for r_val in self.syntheize_templates(template[1]["right"]):
-                yield (template[0], {"left": template[1]["left"], "right":r_val, "condition": template[1]["condition"]})
-            for c_val in self.syntheize_templates(template[1]["condition"]):
-                yield (template[0], {"left": template[1]["left"], "condition": c_val, "right": template[1]["right"]})
+        def check(node, expected):
+            component, children = node
+            if component[0] == self.HOLE:
+                return not children
+            if not self._matches(component, expected):
+                return False
+            slots = self._slots(component)
+            return (set(children) == set(slots)
+                    and all(check(children[name], slot_requirement)
+                            for name, slot_requirement in slots.items()))
 
-        elif template[0][0] in ('post-increment', 'post-decrement', 'pre-increment', 'pre-decrement'):
-            lvar = template[1]['argument'][0][0]
-            yield (template[0], {"argument": ((ReteEnumerator.HOLE, template[1]["argument"][0][1]), {})})
-            
-        elif "func" in template[0][0]:
-            for data in template[1]:
-                for arg_i, data in enumerate(self.iterate_patches(template[1]["arguments"])):
-                    yield (template[0], {f"argument_{arg_i}": data})            
+        valid = check(tree, requirement)
+        self._valid_cache[key] = valid
+        return valid
 
+    def _requirement_at(self, tree, path, root_requirement):
+        requirement = root_requirement
+        node = tree
+        for name in path:
+            requirement = self._slots(node[0])[name]
+            node = node[1][name]
+        return requirement
 
-    def replace_variables(self, template):
-        new_templates = []
-        if self.has_hole(template):
-            new_templates = self.find_and_fill_hole(template)
-        else:
-            new_templates = [template]
-        return_templates = []
-        for template in new_templates:
-            return_templates += list(self.syntheize_templates(template))
+    def _ranked_candidates(self, tree, path, root_requirement):
+        key = self._signature(tree), path, root_requirement
+        if key not in self._probability_cache:
+            requirement = self._requirement_at(tree, path, root_requirement)
+            available = [component for component in self.variables + self.constants
+                         if self._matches(component, requirement)]
+            code = program_to_code((tree, {}))
+            probabilities = self.ranker.probabilities(code, path,
+                                                        [component[0] for component in available])
+            choices = [(component, float(probabilities.get(component[0], 0)))
+                       for component in available]
+            choices = [(component, probability) for component, probability in choices
+                       if 0 < probability <= 1]
+            choices.sort(key=lambda item: (-item[1], item[0][0]))
+            self._probability_cache[key] = choices[:self.top_k]
+        return self._probability_cache[key]
 
-        return return_templates
-            
-    def _generate(self, new_patches: List[ComponentTree], edit_dist: Dict[str, int], components: List[Component]):
-        new_queue = []
-        for template in new_patches:
-            template_code = self.template_to_code(template)
-            holes = collect_symbols(template[0][1], any_fn(ComponentSymbol.is_lhole, ComponentSymbol.is_rhole))
-            if not holes:
-                continue
-            names = list(set(ComponentSymbol.parse(h).name for h in holes))
-            commutative = (template[0][0] in ['addition', 'multiplication',
-                                       'equal', 'not-equal',
-                                       'logical-and', 'logical-or', 'max', 'bitwise-and'])
-            for new_template in self.replace_variables(template):
-                code = self.template_to_code(new_template)
-                if code in edit_dist:
+    def _instantiations(self, tree, distance, root_requirement):
+        paths = [path for path, node in self._paths(tree) if node[0][0] == self.HOLE]
+        if not paths:
+            return
+        options = [self._ranked_candidates(tree, path, root_requirement)
+                   for path in paths]
+        for score, components in ranked_bindings(options, distance, self.theta):
+            result = tree
+            for path, component in zip(paths, components):
+                result = self._replace(result, path, (component, {}))
+            yield score, result
+
+    def _neighbours(self, tree, root_requirement, max_depth):
+        hole_count = self._hole_count(tree)
+        for path, node in list(self._paths(tree)):
+            cid, _ = node[0]
+            if cid == self.HOLE:
+                # Filling one hole and masking another variable keeps distance.
+                for component, _ in self._ranked_candidates(tree, path, root_requirement):
+                    filled = self._replace(tree, path, (component, {}))
+                    for other_path, other in self._paths(filled):
+                        if (other_path != path and not other[1]
+                                and other[0] in self.variables):
+                            swapped = self._replace(filled, other_path, self.EMPTY_HOLE)
+                            if self._valid(swapped, root_requirement, max_depth):
+                                yield 0, swapped
+            elif not node[1] and node[0] in self.variables:
+                masked = self._replace(tree, path, self.EMPTY_HOLE)
+                if self._valid(masked, root_requirement, max_depth):
+                    yield 1, masked
+
+            if cid in COMPONENTS and node[1]:
+                # Removing an operator retains one of its subexpressions.
+                for child in node[1].values():
+                    shortened = self._replace(tree, path, child)
+                    if (self._hole_count(shortened) > 0
+                            and self._valid(shortened, root_requirement, max_depth)):
+                        yield max(0, hole_count - self._hole_count(shortened)), shortened
+
+            # Appending an operator introduces holes for its other operands.
+            expected = self._requirement_at(tree, path, root_requirement)
+            for operator in self.operators:
+                if not self._matches(operator, expected):
                     continue
-                edit_dist[code] = edit_dist[template_code] + 1
-                dist = (math.e**(self.theta * self.ranker.rank(code)/self.batch), new_template)
-                new_queue.append((math.e**(self.theta * self.ranker.rank(code)), new_template))
+                slots = self._slots(operator)
+                for slot, slot_requirement in slots.items():
+                    if (cid == self.HOLE and slot_requirement != expected) or (
+                            cid != self.HOLE and not self._matches(node[0], slot_requirement)):
+                        continue
+                    children = {name: (node if name == slot else self.EMPTY_HOLE)
+                                for name in slots}
+                    extended = self._replace(tree, path, (operator, children))
+                    if (self._hole_count(extended) > 0
+                            and self._valid(extended, root_requirement, max_depth)):
+                        yield len(slots) - 1, extended
 
-        return new_queue
-    
-    def iterate_patches(self, template):
-        if template[0][0] == ReteEnumerator.HOLE:
-            for i in self.variables:
-                yield (i, {})
+    def enumerate_templates(self, components, depth, typ, need_lreturn,
+                            need_rreturn, compos_used=None, requires_assignment=False):
+        """Yield concrete trees in ascending RETE score, expanding templates lazily."""
+        from itertools import count
+        root_requirement = typ, bool(need_lreturn), bool(need_rreturn)
+        serial = count()
+        template_heap = []
+        patch_heap = []
+        best_distance = {}
+        warned = False
 
-        if type(template[1]) == dict and len(template[1]) == 2 and 'left' in template[1]:
-            for l_val in self.iterate_patches(template[1]["left"]):
-                yield (template[0], {"right": template[1]["right"], "left": l_val})
-            for r_val in self.iterate_patches(template[1]["right"]):
-                yield (template[0], {"left": template[1]["left"], "right": r_val})
+        def add_template(template, distance):
+            nonlocal warned
+            signature = self._signature(template)
+            if not self._valid(template, root_requirement, depth):
+                return
+            if signature in best_distance and best_distance[signature] <= distance:
+                return
+            if (self.template_budget is not None and signature not in best_distance
+                    and len(best_distance) >= self.template_budget):
+                if not warned:
+                    logger.warning("RETE template budget reached; search is truncated")
+                    warned = True
+                return
+            best_distance[signature] = distance
+            heapq.heappush(template_heap, (distance, next(serial), signature, template))
 
-        elif template[0][0] == 'guarded-assignment':
-            for l_val in self.iterate_patches(template[1]["left"]):
-                yield (template[0], {"right": template[1]["right"], "left": l_val, "condition": template[1]["condition"]})
-            for r_val in self.iterate_patches(template[1]["right"]):
-                yield (template[0], {"left": template[1]["left"], "right":r_val, "condition": template[1]["condition"]})
-            for c_val in self.iterate_patches(template[1]["condition"]):
-                yield (template[0], {"left": template[1]["left"], "condition": c_val, "right": template[1]["right"]})
+        initial = 0
+        for source in self.templates:
+            if initial >= self.initial_limit:
+                break
+            if self._hole_count(source):
+                add_template(source, 0)
+                initial += 1
+            else:
+                for path, node in self._paths(source):
+                    if node[0] in self.variables and not node[1]:
+                        add_template(self._replace(source, path, self.EMPTY_HOLE), 0)
+                        initial += 1
+                        if initial >= self.initial_limit:
+                            break
+        if not template_heap:
+            raise ValueError("Rete needs a donor template with at least one variable hole")
 
-        elif template[0][0] in ('post-increment', 'post-decrement', 'pre-increment', 'pre-decrement'):
-            lvar = template[1]['argument'][0][0]
-            for avar in self.iterate_patches(template[1]["argument"]):
-                yield (template[0], {"argument": avar})
-            
-        elif "func" in template[0][0]:
-            for data in template[1]:
-                pass
+        while template_heap or patch_heap:
+            next_patch_score = patch_heap[0][0] if patch_heap else float('inf')
+            next_template_bound = (template_heap[0][0] + self.theta
+                                   if template_heap else float('inf'))
+            if template_heap and next_template_bound <= next_patch_score:
+                distance, _, signature, template = heapq.heappop(template_heap)
+                if best_distance[signature] != distance:
+                    continue
+                stream = self._instantiations(template, distance, root_requirement)
+                first = next(stream, None)
+                if first is not None:
+                    score, patch = first
+                    heapq.heappush(patch_heap,
+                                   (score, next(serial), patch, stream))
+                for edge_cost, neighbour in self._neighbours(template, root_requirement, depth):
+                    add_template(neighbour, distance + edge_cost)
+            else:
+                _, _, patch, stream = heapq.heappop(patch_heap)
+                if not requires_assignment or any(
+                        node[0][0] in ('assignment', 'guarded-assignment',
+                                       'post-increment', 'post-decrement')
+                        for _, node in self._paths(patch)):
+                    yield patch
+                successor = next(stream, None)
+                if successor is not None:
+                    score, next_patch = successor
+                    heapq.heappush(patch_heap,
+                                   (score, next(serial), next_patch, stream))
 
-    def enumerate_templates(self, components: List[Component],depth: int, typ: TridentType, need_lreturn: bool,
-                    need_rreturn: bool, compos_used=None, requires_assignment=False):
-        roots = [c for c in components
-            if (ComponentSemantics.get_rreturn(c[1]) \
-                    and ComponentSymbol.parse(ComponentSemantics.get_rreturn(c[1])).type == typ)]
-        edit_dist = {}
-        for template in self.templates:
-            edit_dist[self.template_to_code(template)] = 0
-            yield template
-        priority_queue = self._generate(self.templates, edit_dist, components)
-        while priority_queue:
-            patch = priority_queue.pop(0)
-            for new_patch in self.iterate_patches(patch):
-                yield new_patch
-                priority_queue += self._generate([patch], edit_dist, components)
-            priority_queue = sorted(priority_queue, lambda x: x[0])
-            priority_queue = priority_queue[:self.drop]
-        return 
 
 class MappingDict(dict):
     def __hash__(self):
@@ -1082,10 +1158,8 @@ def synthesize(components: List[Component],
     logger.info(f"locations extracted from klee paths: {list(lids.keys())}")
     assert len(lids) == 1, ""
     (lid, typ) = list(lids.items())[0]
-    batch = []
     total = set()
     rank = 1
-    requires_assignment = False
     for tree in enumerate_function(tuple(components), depth, typ, False, True, requires_assignment=requires_assignment):
         assigned = extract_assigned(tree)
         if len(assigned) != len(set(assigned)):
@@ -1093,7 +1167,6 @@ def synthesize(components: List[Component],
         if check_equal(tree):
             continue
         code = program_to_code((tree, {}))
-        print(code)
         if code in total:
             continue
         if rank%500 == 0:
@@ -1107,7 +1180,9 @@ def synthesize(components: List[Component],
         total.add(code)
         result = verify({lid: (tree, {})}, specification)
         if result:
-            yield {lid: (batch[0][1], { ComponentSymbol.parse(f).name:v for (f, v) in result.constants.items() })}
+            yield {lid: (tree, {ComponentSymbol.parse(f).name: v
+                                for (f, v) in result.constants.items()})}
+        rank += 1
 
 
 
@@ -1261,15 +1336,30 @@ def main():
                     metavar='FILE',
                     help='Templates for patch')
     parser.add_argument('--theta',
-                    type=int,
+                    type=float,
                     default=None,
                     help='Constant')
     parser.add_argument('--model',
                     type=str,
-                    help='string')
+                    help='JSON export of per-variable probabilities')
+    parser.add_argument('--template-budget', type=int,
+                        help='optional maximum number of abstract templates to explore')
 
     parser.add_argument('--priority', action='store_true', help='Synthesizes using priority')
     args = parser.parse_args()
+    ranker = None
+    if args.templates:
+        if not args.model:
+            parser.error("--templates requires --model with probabilities exported "
+                         "from a trained variable ranker")
+        try:
+            ranker = ChainRanker(args.model)
+        except (OSError, ValueError) as error:
+            parser.error(f"cannot load variable probabilities: {error}")
+        if not ranker.has_models():
+            parser.error("--model contains no variable probabilities")
+    if args.template_budget is not None and args.template_budget < 1:
+        parser.error("--template-budget must be positive")
     
     rootLogger = logging.getLogger()
     rootLogger.setLevel(logging.INFO)
@@ -1297,10 +1387,10 @@ def main():
         if not components:
             logger.error("components are not provided")
             exit(1)
-        if args.templates and no_ranker is False:
+        if args.templates:
             template_files = { i: Path(a) for i, a in enumerate(args.templates)}
             templates = load_programs(template_files, components)
-            rete_enum = ReteEnumerator(templates.values(), components, args)
+            rete_enum = ReteEnumerator(templates.values(), components, args, ranker)
             enum = rete_enum.enumerate_templates
         else:
             enum = brute_enumeration
@@ -1312,8 +1402,6 @@ def main():
             for i, v in enumerate(result):
                 for (lid, prog) in v.items():
                     print(f"#{i} {lid}:\t{program_to_code(prog)}")
-                if i == 2:
-                    break
 
         else:
             programs = next(result, None)

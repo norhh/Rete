@@ -1,36 +1,23 @@
-# Installation
-Build the docker container in `infra`, and then build the container in the current folder.
+# Rete C/C++ feature extractor
 
-```
-> cd infra/
-> docker build -t rete/ubuntu-16.04-llvm-3.8.1 . 
-> cd ..
-> docker build -t rete-feature .
-```
+This is the Clang-based feature and CDU-chain extractor used by the Rete package. It requires LLVM and Clang 3.8.1. From the repository root, build it with:
 
-# Running
-Run the docker container by first mounting your current directory into `/tmp` to `/bin/bash`
-```
-> docker run -v $(pwd):/tmp --rm -it rete /bin/bash
+```sh
+cmake -S rete-feature-extracter -B rete-feature-extracter/build -DRETE_LLVM=/llvm-3.8.1
+cmake --build rete-feature-extracter/build
 ```
 
-You can ignore the mounting if you do not need the current directory. You can either compile inside docker
-after mounting or directly run the build code present in `/rete` folder.
+The legacy two-stage Docker build is documented in the [root README](../Readme.md). It has not been verified on a current host.
 
-```
-> cd /tmp/rete
-> cmake .. -DF1X_LLVM=/llvm-3.8.1
-> make
-> chmod u+x rete
-```
+To process a source tree with a Clang compilation database:
 
-To extract a json of feature information.
-```
-> ./rete  -output="<path>"
+```sh
+python3 rete-feature-extracter/rete_runner.py \
+  --compile-commands /path/to/compile_commands.json \
+  --executable rete-feature-extracter/build/tools/rete \
+  --output-dir /path/to/chain_data
 ```
 
-To extract intermediate CDU chain data.
-```
-> ./rete -get-chain-data -output="<path>"
-```
+For self-contained C/C++ files, use `rete_runner.py /path/to/sources` instead of `--compile-commands`. `--features` extracts feature JSON; the default extracts CDU-chain JSON. `--force` replaces valid existing outputs, `--jobs` sets the parallel worker count, and `--contains` filters source paths. The driver reports failures and returns a nonzero status if any extraction fails.
 
+For one source file, the underlying executable accepts `-get-chain-data -output=/path/to/data.json` after the source path. Omit `-get-chain-data` to extract feature JSON. Pass `-p /path/to/build-directory` when the source requires a compilation database.
